@@ -1,148 +1,499 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
-  <title>P2P Compute Portal (WebSocket Version)</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>P2P Compute Portal — Dark Dashboard</title>
+
+  <!-- Tailwind CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: Arial; padding: 20px; max-width: 700px; margin: auto; }
-    .box { border: 1px solid #aaa; padding: 15px; margin-top: 20px; }
-    h2 { margin-top: 0; }
-    #logProvider, #logRequester {
-      background: #eee; height: 150px; padding: 10px; overflow:auto;
-    }
+    /* small tweaks */
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace; }
+    .log { white-space: pre-wrap; overflow:auto; max-height: 300px; }
   </style>
 </head>
+<body class="bg-zinc-900 text-zinc-100">
 
-<body>
+  <div class="min-h-screen p-6 max-w-5xl mx-auto">
+    <header class="flex items-center justify-between mb-6">
+      <div>
+        <h1 class="text-2xl font-semibold">P2P Compute Portal</h1>
+        <p class="text-zinc-400 text-sm">Dark modern UI — works with ws://localhost:9000, GET /peers, POST /task</p>
+      </div>
+      <div class="text-sm text-zinc-400">
+        <div>Backend: <span id="backendStatus" class="inline-block px-2 py-1 rounded bg-zinc-800">localhost:9000</span></div>
+      </div>
+    </header>
 
-<h1>P2P Compute Portal (Backend Compatible)</h1>
+    <!-- controls -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div class="col-span-1 md:col-span-2 space-y-4">
+        <div class="bg-zinc-800 p-4 rounded-lg shadow">
+          <div class="flex items-center justify-between">
+            <div>
+              <h2 class="text-lg font-medium">Mode</h2>
+              <p class="text-zinc-400 text-sm">Switch between Provider and Requester</p>
+            </div>
+            <div class="flex gap-2">
+              <button id="btnProvider" class="px-3 py-2 rounded bg-emerald-500 text-zinc-900 font-semibold">Provider</button>
+              <button id="btnRequester" class="px-3 py-2 rounded bg-zinc-700 hover:bg-zinc-600">Requester</button>
+            </div>
+          </div>
+        </div>
 
-<button id="providerBtn">Become Provider</button>
-<button id="requesterBtn">Become Requester</button>
+        <!-- Provider panel -->
+        <section id="providerPanel" class="bg-zinc-800 p-4 rounded-lg shadow hidden">
+          <div class="flex items-start justify-between gap-4">
+            <div class="flex-1">
+              <h3 class="text-lg font-semibold">Provider (compute node)</h3>
+              <p class="text-zinc-400 text-sm">Register with the backend and receive tasks over WebSocket.</p>
 
-<!-- PROVIDER -->
-<div class="box" id="providerUI" style="display:none;">
-  <h2>Provider</h2>
-  <p>Your Peer ID: <b id="providerId"></b></p>
-  <div id="logProvider"></div>
-</div>
+              <div class="mt-4 grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-zinc-400 text-sm mb-2">Peer ID</label>
+                  <input id="provIdInput" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 mono" placeholder="leave blank to auto-generate" />
+                </div>
+                <div>
+                  <label class="block text-zinc-400 text-sm mb-2">Human name</label>
+                  <input id="provNameInput" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" placeholder="provider-node-1" />
+                </div>
+              </div>
 
-<!-- REQUESTER -->
-<div class="box" id="requesterUI" style="display:none;">
-  <h2>Requester</h2>
+              <div class="flex gap-2 mt-4">
+                <button id="provConnectBtn" class="px-3 py-2 bg-emerald-500 text-zinc-900 rounded font-semibold">Connect & Register</button>
+                <button id="provDisconnectBtn" class="px-3 py-2 bg-zinc-700 rounded hidden">Disconnect</button>
+                <button id="provCopyBtn" class="px-3 py-2 bg-zinc-700 rounded">Copy ID</button>
+              </div>
 
-  <p><b>Online Peers:</b></p>
-  <button onclick="loadPeers()">Refresh</button>
-  <pre id="peerList"></pre>
+              <div class="mt-4">
+                <label class="text-zinc-400 text-sm">Provider Log</label>
+                <div id="provLog" class="log bg-zinc-900 border border-zinc-700 rounded p-3 mono text-sm"></div>
+              </div>
+            </div>
 
-  <h3>Send File Task (Wordcount)</h3>
-  <input type="file" id="fileInput">
-  <button onclick="sendTask()">Send Task</button>
+            <div class="w-44 space-y-4">
+              <div class="bg-zinc-900 border border-zinc-700 p-3 rounded text-center">
+                <div class="text-xs text-zinc-400">Status</div>
+                <div id="provStatus" class="text-sm font-semibold mt-1">Disconnected</div>
+              </div>
 
-  <h3>Output</h3>
-  <div id="logRequester"></div>
-</div>
+              <div class="bg-zinc-900 border border-zinc-700 p-3 rounded text-center">
+                <div class="text-xs text-zinc-400">Last task result</div>
+                <div id="provLast" class="text-sm font-mono">—</div>
+              </div>
+            </div>
+          </div>
+        </section>
 
-<script>
-/* --------------------------
-   Logging Helpers
---------------------------- */
-function logProvider(msg) {
-  document.getElementById("logProvider").innerHTML += msg + "<br>";
-}
-function logRequester(msg) {
-  document.getElementById("logRequester").innerHTML += msg + "<br>";
-}
+        <!-- Requester panel -->
+        <section id="requesterPanel" class="bg-zinc-800 p-4 rounded-lg shadow hidden">
+          <h3 class="text-lg font-semibold">Requester</h3>
+          <p class="text-zinc-400 text-sm">Discover providers, select targets, upload file or send simple tasks.</p>
 
-let ws = null;
-let myPeerId = null;
+          <div class="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <div class="flex items-center gap-2">
+                <button id="refreshPeersBtn" class="px-3 py-2 bg-sky-500 text-zinc-900 rounded font-semibold">Refresh Peers</button>
+                <button id="refreshAutoBtn" class="px-3 py-2 bg-zinc-700 rounded">Auto</button>
+              </div>
 
-/* --------------------------
-   1. PROVIDER MODE
---------------------------- */
-document.getElementById("providerBtn").onclick = () => {
-  document.getElementById("providerUI").style.display = "block";
+              <div id="peersBox" class="mt-3 bg-zinc-900 border border-zinc-700 rounded p-3 h-44 overflow-auto text-sm mono"></div>
+            </div>
 
-  myPeerId = "peer_" + Math.floor(Math.random() * 99999);
-  document.getElementById("providerId").innerText = myPeerId;
+            <div>
+              <label class="block text-zinc-400 text-sm">Task Type</label>
+              <select id="taskType" class="mt-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 w-full">
+                <option value="wordcount">wordcount (file)</option>
+                <option value="sum">sum (numbers)</option>
+                <option value="run_code">run_code (server delegation)</option>
+              </select>
 
-  ws = new WebSocket("ws://localhost:9000");
+              <div id="sumInputs" class="mt-3 hidden">
+                <label class="text-zinc-400 text-sm mb-1">Numbers (comma separated)</label>
+                <input id="sumVals" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 mono" placeholder="1,2,3,4" />
+              </div>
 
-  ws.onopen = () => {
-    logProvider("Connected to backend");
+              <div id="fileInputs" class="mt-3">
+                <label class="text-zinc-400 text-sm mb-1">Choose file</label>
+                <input id="taskFile" type="file" class="block w-full text-sm" />
+              </div>
 
-    ws.send(JSON.stringify({
-      type: "register",
-      peerId: myPeerId,
-      meta: { name: myPeerId }
-    }));
-  };
+              <div id="codeInputs" class="mt-3 hidden">
+                <label class="text-zinc-400 text-sm mb-1">Language</label>
+                <input id="codeLang" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" placeholder="python" />
+                <label class="text-zinc-400 text-sm mb-1 mt-2">Code</label>
+                <textarea id="codeText" rows="6" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 mono"></textarea>
+                <p class="text-xs text-zinc-500 mt-1">Note: run_code will be executed by provider nodes only if they allow running code (dangerous). Use for trusted nodes only.</p>
+              </div>
 
-  ws.onmessage = evt => {
-    const msg = JSON.parse(evt.data);
+              <div class="mt-4 flex gap-2">
+                <button id="sendToAllBtn" class="px-3 py-2 bg-rose-500 text-zinc-900 rounded font-semibold">Send to Selected / All</button>
+                <button id="sendToSelectedBtn" class="px-3 py-2 bg-zinc-700 rounded">Send to Checked</button>
+              </div>
 
-    if (msg.type === "info") {
-      logProvider("Registered OK");
-      return;
+              <div class="mt-3">
+                <label class="text-zinc-400 text-sm">Task Status</label>
+                <div id="taskStatus" class="bg-zinc-900 border border-zinc-700 rounded p-3 mono text-sm h-28 overflow:auto"></div>
+              </div>
+            </div>
+          </div>
+
+        </section>
+      </div>
+
+      <!-- right column summary -->
+      <aside class="space-y-4">
+        <div class="bg-zinc-800 p-4 rounded-lg">
+          <h4 class="text-sm text-zinc-400">Quick Tips</h4>
+          <ul class="text-sm mt-2 space-y-1 text-zinc-300">
+            <li>1. Start backend (node server.js)</li>
+            <li>2. Click <strong>Provider → Connect</strong> in one tab</li>
+            <li>3. Click <strong>Requester → Refresh Peers</strong> in another tab</li>
+            <li>4. Choose peers and send tasks</li>
+          </ul>
+        </div>
+
+        <div class="bg-zinc-800 p-4 rounded-lg">
+          <h4 class="text-sm text-zinc-400">Latest Task Result</h4>
+          <div id="latestResult" class="mono text-sm mt-2">—</div>
+        </div>
+
+        <div class="bg-zinc-800 p-4 rounded-lg">
+          <h4 class="text-sm text-zinc-400">WebSocket Health</h4>
+          <div id="wsHealth" class="mt-2 text-sm">Not connected</div>
+        </div>
+      </aside>
+    </div>
+
+    <footer class="mt-6 text-zinc-500 text-sm">
+      <div>Made for P2P compute demo • Keep tasks small when using file base64 transfer</div>
+    </footer>
+  </div>
+
+  <!-- SCRIPT -->
+  <script>
+    // Backend URLs
+    const WS_URL = 'ws://localhost:9000';
+    const PEERS_URL = 'http://localhost:9000/peers';
+    const TASK_URL = 'http://localhost:9000/task';
+
+    // UI references
+    const providerPanel = document.getElementById('providerPanel');
+    const requesterPanel = document.getElementById('requesterPanel');
+    const provConnectBtn = document.getElementById('provConnectBtn');
+    const provDisconnectBtn = document.getElementById('provDisconnectBtn');
+    const provCopyBtn = document.getElementById('provCopyBtn');
+    const provLog = document.getElementById('provLog');
+    const provStatus = document.getElementById('provStatus');
+    const provLast = document.getElementById('provLast');
+    const provIdInput = document.getElementById('provIdInput');
+    const provNameInput = document.getElementById('provNameInput');
+
+    const refreshPeersBtn = document.getElementById('refreshPeersBtn');
+    const refreshAutoBtn = document.getElementById('refreshAutoBtn');
+    const peersBox = document.getElementById('peersBox');
+    const taskTypeEl = document.getElementById('taskType');
+    const sumInputs = document.getElementById('sumInputs');
+    const fileInputs = document.getElementById('fileInputs');
+    const codeInputs = document.getElementById('codeInputs');
+    const sendToAllBtn = document.getElementById('sendToAllBtn');
+    const sendToSelectedBtn = document.getElementById('sendToSelectedBtn');
+    const taskStatus = document.getElementById('taskStatus');
+    const latestResult = document.getElementById('latestResult');
+    const wsHealth = document.getElementById('wsHealth');
+
+    // mode buttons
+    document.getElementById('btnProvider').addEventListener('click', () => {
+      providerPanel.classList.remove('hidden');
+      requesterPanel.classList.add('hidden');
+      document.getElementById('btnProvider').classList.add('bg-emerald-500');
+      document.getElementById('btnRequester').classList.remove('bg-emerald-500');
+    });
+    document.getElementById('btnRequester').addEventListener('click', () => {
+      providerPanel.classList.add('hidden');
+      requesterPanel.classList.remove('hidden');
+      document.getElementById('btnRequester').classList.add('bg-emerald-500');
+      document.getElementById('btnProvider').classList.remove('bg-emerald-500');
+    });
+
+    // default show provider
+    document.getElementById('btnProvider').click();
+
+    // small logging helpers
+    function appendProvLog(...parts) {
+      const line = parts.join(' ');
+      provLog.textContent += line + '\\n';
+      provLog.scrollTop = provLog.scrollHeight;
+    }
+    function appendTaskStatus(msg) {
+      taskStatus.textContent += msg + '\\n';
+      taskStatus.scrollTop = taskStatus.scrollHeight;
     }
 
-    if (msg.type === "task") {
-      logProvider("Received Task: " + JSON.stringify(msg.task));
+    // WebSocket and peer handling (Provider)
+    let ws = null;
+    let myPeerId = null;
+    let heartbeatInterval = null;
 
+    async function connectProvider() {
+      if (ws && ws.readyState === WebSocket.OPEN) return;
+      myPeerId = provIdInput.value.trim() || ('peer_' + Math.floor(Math.random() * 99999));
+      const name = provNameInput.value.trim() || myPeerId;
+
+      appendProvLog('Connecting to', WS_URL, 'as', myPeerId);
+      ws = new WebSocket(WS_URL);
+
+      ws.addEventListener('open', () => {
+        appendProvLog('Connected to backend — registering...');
+        ws.send(JSON.stringify({ type: 'register', peerId: myPeerId, meta: { name } }));
+        provStatus.textContent = 'Connected';
+        wsHealth.textContent = 'Connected';
+        provDisconnectBtn.classList.remove('hidden');
+        provConnectBtn.classList.add('hidden');
+        // heartbeat
+        heartbeatInterval = setInterval(() => {
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'heartbeat', peerId: myPeerId }));
+          }
+        }, 15000);
+      });
+
+      ws.addEventListener('message', (ev) => {
+        try {
+          const msg = JSON.parse(ev.data);
+          if (msg.type === 'info') {
+            appendProvLog('INFO:', msg.message);
+            return;
+          }
+          if (msg.type === 'task') {
+            appendProvLog('TASK RECEIVED:', JSON.stringify(msg.task));
+            // handle example tasks
+            handleTask(msg).catch(err => appendProvLog('Task handler error:', err.toString()));
+          }
+        } catch (e) {
+          appendProvLog('Invalid message:', ev.data);
+        }
+      });
+
+      ws.addEventListener('close', () => {
+        appendProvLog('Disconnected from backend');
+        provStatus.textContent = 'Disconnected';
+        wsHealth.textContent = 'Disconnected';
+        provDisconnectBtn.classList.add('hidden');
+        provConnectBtn.classList.remove('hidden');
+        if (heartbeatInterval) clearInterval(heartbeatInterval);
+        // try auto-reconnect after a short delay
+        setTimeout(() => {
+          if (!ws || ws.readyState !== WebSocket.OPEN) connectProvider();
+        }, 3000);
+      });
+
+      ws.addEventListener('error', (err) => {
+        appendProvLog('WebSocket error', err && err.message ? err.message : err);
+      });
+    }
+
+    provConnectBtn.addEventListener('click', connectProvider);
+    provDisconnectBtn.addEventListener('click', () => {
+      if (ws) ws.close();
+      ws = null;
+      provStatus.textContent = 'Disconnected';
+      provDisconnectBtn.classList.add('hidden');
+      provConnectBtn.classList.remove('hidden');
+    });
+
+    provCopyBtn.addEventListener('click', () => {
+      const id = myPeerId || provIdInput.value || '';
+      if (!id) return alert('No ID to copy');
+      navigator.clipboard?.writeText(id);
+      appendProvLog('Copied ID to clipboard:', id);
+    });
+
+    // Task handler on Provider
+    async function handleTask(msg) {
+      const { taskId, task, file } = msg;
       let result = null;
-      if (msg.task.type === "wordcount" && msg.file) {
-        const text = atob(msg.file.dataBase64);
-        result = text.split(/\s+/).length;
+      // Implement a few safe task types
+      if (task && task.type === 'wordcount') {
+        if (file && file.dataBase64) {
+          try {
+            const text = atob(file.dataBase64);
+            // small text wordcount
+            const words = text.trim().split(/\\s+/).filter(Boolean);
+            result = { wordCount: words.length, fileName: file.name };
+          } catch (e) {
+            result = { error: 'bad_file' };
+          }
+        } else {
+          result = { error: 'no_file' };
+        }
+      } else if (task && task.type === 'sum') {
+        // server could send values
+        const vals = Array.isArray(task.values) ? task.values : [];
+        result = { sum: vals.reduce((a,b)=>a+ (Number(b)||0), 0) };
+      } else if (task && task.type === 'run_code') {
+        // Very IMPORTANT: running arbitrary code is dangerous.
+        // This block shows how a provider might accept code, but:
+        // - Only enable on trusted nodes.
+        // - For browser providers, we can run JS safely in sandboxed manner (eval) — but it's still risky.
+        // We'll support small JS execution only for demonstration.
+        if (task.language === 'js' && task.code) {
+          try {
+            // eslint-disable-next-line no-eval
+            const out = eval(task.code);
+            result = { output: String(out) };
+          } catch (e) {
+            result = { error: String(e) };
+          }
+        } else {
+          result = { error: 'unsupported_code_or_language' };
+        }
+      } else {
+        result = { error: 'unknown_task' };
       }
 
-      ws.send(JSON.stringify({
-        type: "taskResult",
-        peerId: myPeerId,
-        taskId: msg.taskId,
-        result
-      }));
-
-      logProvider("Sent result: " + result);
+      // send result back
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'taskResult', peerId: myPeerId, taskId, result }));
+        appendProvLog('Sent result for ' + taskId + ': ' + JSON.stringify(result));
+        provLast.textContent = JSON.stringify(result);
+        latestResult.textContent = JSON.stringify(result);
+      } else {
+        appendProvLog('Cannot send result, WS not open');
+      }
     }
-  };
-};
 
-/* --------------------------
-   2. REQUESTER MODE
---------------------------- */
-document.getElementById("requesterBtn").onclick = () => {
-  document.getElementById("requesterUI").style.display = "block";
-};
+    // ============= REQUESTER LOGIC ==================
+    let autoRefresh = false;
+    let autoTimer = null;
 
-/* --------------------------
-   Load peers from backend
---------------------------- */
-async function loadPeers() {
-  const res = await fetch("http://localhost:9000/peers");
-  const data = await res.json();
-  document.getElementById("peerList").textContent = JSON.stringify(data, null, 2);
-}
+    async function loadPeers() {
+      try {
+        const r = await fetch(PEERS_URL);
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        renderPeers(j.peers || []);
+      } catch (e) {
+        peersBox.textContent = 'Error loading peers: ' + e.message;
+      }
+    }
 
-/* --------------------------
-   Send file-based task
---------------------------- */
-async function sendTask() {
-  const file = document.getElementById("fileInput").files[0];
-  if (!file) return alert("Choose a file");
+    function renderPeers(list) {
+      if (!Array.isArray(list) || !list.length) {
+        peersBox.textContent = 'No peers discovered';
+        return;
+      }
+      peersBox.innerHTML = '';
+      list.forEach(p => {
+        // p: { peerId, meta, lastSeen, ageSec, ip, distanceKm }
+        const row = document.createElement('div');
+        row.className = 'flex items-center justify-between gap-2 p-2 border-b border-zinc-800';
+        row.innerHTML = `
+          <div>
+            <div class="font-mono text-sm">\${p.peerId}</div>
+            <div class="text-xs text-zinc-400">\${(p.meta && p.meta.name) ? p.meta.name : 'no-name'} • last \${Math.round(p.ageSec)}s</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="checkbox" data-peer="\${p.peerId}" class="peer-checkbox" />
+            <button class="px-2 py-1 rounded bg-sky-600 text-zinc-900 btn-send" data-peer="\${p.peerId}">Send</button>
+          </div>
+        `;
+        peersBox.appendChild(row);
+      });
 
-  const form = new FormData();
-  form.append("task", JSON.stringify({ type: "wordcount" }));
-  form.append("file", file);
+      // attach events
+      peersBox.querySelectorAll('.btn-send').forEach(btn => {
+        btn.onclick = () => sendTaskToPeers([btn.dataset.peer]);
+      });
+    }
 
-  const res = await fetch("http://localhost:9000/task", {
-    method: "POST",
-    body: form
-  });
+    document.getElementById('refreshPeersBtn').addEventListener('click', loadPeers);
 
-  const out = await res.json();
-  logRequester("Task Response:");
-  logRequester(JSON.stringify(out, null, 2));
-}
-</script>
+    refreshAutoBtn.addEventListener('click', () => {
+      autoRefresh = !autoRefresh;
+      refreshAutoBtn.textContent = autoRefresh ? 'Auto: ON' : 'Auto';
+      if (autoRefresh) {
+        autoTimer = setInterval(loadPeers, 5000);
+      } else {
+        clearInterval(autoTimer);
+      }
+    });
 
+    taskTypeEl.addEventListener('change', () => {
+      const v = taskTypeEl.value;
+      sumInputs.classList.toggle('hidden', v !== 'sum');
+      fileInputs.classList.toggle('hidden', v !== 'wordcount');
+      codeInputs.classList.toggle('hidden', v !== 'run_code');
+    });
+
+    // send to all (or to selected via checkboxes)
+    sendToAllBtn.addEventListener('click', async () => {
+      // get checked peers, if none, broadcast
+      const checked = Array.from(document.querySelectorAll('.peer-checkbox:checked')).map(ch => ch.dataset.peer);
+      await sendTaskToPeers(checked.length ? checked : null);
+    });
+
+    sendToSelectedBtn.addEventListener('click', async () => {
+      const checked = Array.from(document.querySelectorAll('.peer-checkbox:checked')).map(ch => ch.dataset.peer);
+      if (!checked.length) return alert('Select peers (checkbox) first');
+      await sendTaskToPeers(checked);
+    });
+
+    // sendTask core: calls POST /task with FormData { task: JSON, file, peers(optional) }
+    async function sendTaskToPeers(peerList = null) {
+      appendTaskStatus('Preparing task...');
+      const type = taskTypeEl.value;
+      const taskObj = { type };
+
+      if (type === 'sum') {
+        const nums = (document.getElementById('sumVals').value || '').split(',').map(s => parseFloat(s)).filter(n => !isNaN(n));
+        taskObj.values = nums;
+      } else if (type === 'run_code') {
+        taskObj.language = document.getElementById('codeLang').value.trim() || 'js';
+        taskObj.code = document.getElementById('codeText').value || '';
+      } else if (type === 'wordcount') {
+        // no extra props
+      }
+
+      const form = new FormData();
+      form.append('task', JSON.stringify(taskObj));
+
+      // file (only if wordcount)
+      const fileEl = document.getElementById('taskFile');
+      if (fileEl && fileEl.files && fileEl.files[0]) {
+        form.append('file', fileEl.files[0]);
+      }
+
+      if (Array.isArray(peerList)) {
+        form.append('peers', JSON.stringify(peerList));
+        appendTaskStatus('Targeting peers: ' + peerList.join(', '));
+      } else {
+        appendTaskStatus('Broadcasting to all discovered peers');
+      }
+
+      appendTaskStatus('Uploading task to server...');
+      try {
+        const r = await fetch(TASK_URL, { method: 'POST', body: form });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        appendTaskStatus('Server returned taskId: ' + j.taskId);
+        appendTaskStatus('SentTo: ' + JSON.stringify(j.sentTo));
+        appendTaskStatus('Responses: ' + JSON.stringify(j.responses));
+        appendTaskStatus('Missing: ' + JSON.stringify(j.missing));
+        latestResult.textContent = JSON.stringify(j.responses || {}, null, 2);
+      } catch (e) {
+        appendTaskStatus('Task send failed: ' + e.message);
+      }
+    }
+
+    // initial load
+    loadPeers();
+
+    // ping indicator (very simple)
+    setInterval(() => {
+      wsHealth.textContent = ws && ws.readyState === WebSocket.OPEN ? 'WS open' : 'WS closed';
+    }, 2000);
+  </script>
 </body>
 </html>
