@@ -6,7 +6,7 @@ from uuid import uuid4
 
 from .schemas import (
     PeerRegisterRequest, PeerHeartbeatRequest, PeerResponse,
-    ModelInfo, JobCreateRequest, JobUpdateStatusRequest, JobResponse, JobStatus
+    JobCreateRequest, JobUpdateStatusRequest, JobResponse, JobStatus
 )
 
 
@@ -19,7 +19,7 @@ class Peer:
         self.has_gpu = data.has_gpu
         self.gpu_memory_total_mb = data.gpu_memory_total_mb
         self.gpu_memory_free_mb = data.gpu_memory_free_mb
-        self.models = data.models
+        self.models = data.models or []     # SAFETY FIX
         self.current_load_percent = 0.0
         self.last_heartbeat = datetime.now(timezone.utc)
         self.is_online = True
@@ -42,7 +42,7 @@ class Job:
     def __init__(self, job_id: str, data: JobCreateRequest):
         self.id = job_id
         self.requester_peer_id = data.requester_peer_id
-        self.assigned_peer_id = None
+        self.assigned_peer_id: Optional[str] = None
         self.model_name = data.model_name
         self.payload_url = data.payload_url
         self.status = JobStatus.QUEUED
@@ -68,7 +68,7 @@ class Registry:
         self.peers: Dict[str, Peer] = {}
         self.jobs: Dict[str, Job] = {}
 
-    # --------- Peer Management --------- #
+    # ---------------- PEERS ---------------- #
     def register_peer(self, data: PeerRegisterRequest) -> PeerResponse:
         peer_id = str(uuid4())
         peer = Peer(peer_id, data)
@@ -91,6 +91,8 @@ class Registry:
 
     def list_peers(self, only_online=True) -> List[PeerResponse]:
         now = datetime.now(timezone.utc)
+
+        # auto-mark offline peers
         for peer in self.peers.values():
             if now - peer.last_heartbeat > timedelta(seconds=30):
                 peer.is_online = False
@@ -98,14 +100,15 @@ class Registry:
         peers = self.peers.values()
         if only_online:
             peers = [p for p in peers if p.is_online]
+
         return [p.to_response() for p in peers]
 
-    # --------- Job Management --------- #
+    # ---------------- JOBS ---------------- #
     def create_job(self, data: JobCreateRequest) -> JobResponse:
         job_id = str(uuid4())
         job = Job(job_id, data)
 
-        peer = self._select_peer_for_model(data.model_name)
+        peer = self._select_peer_for_model(job.model_name)
         if peer:
             job.assigned_peer_id = peer.id
             job.status = JobStatus.ASSIGNED
@@ -115,13 +118,19 @@ class Registry:
 
     def _select_peer_for_model(self, model_name: str) -> Optional[Peer]:
         candidates = []
+
         for peer in self.peers.values():
-            if peer.is_online and peer.has_gpu and any(m.name == model_name for m in peer.models):
+            if not peer.is_online:
+                continue
+            if not peer.has_gpu:
+                continue
+            if peer.models and any(m.name == model_name for m in peer.models):
                 candidates.append(peer)
 
         if not candidates:
             return None
 
+        # sort descending by free GPU mem, ascending by load
         candidates.sort(
             key=lambda p: (-(p.gpu_memory_free_mb or 0), p.current_load_percent)
         )
@@ -144,7 +153,8 @@ class Registry:
         job.updated_at = datetime.now(timezone.utc)
         return job.to_response()
 
-    def get_next_assigned_job(self, peer_id: str):
+    def get_next_assigned_job(self, peer_id: str) -> Optional[Job]:
+        # worker_sim.py needs EXACTLY this behavior:
         for job in self.jobs.values():
             if job.assigned_peer_id == peer_id and job.status == JobStatus.ASSIGNED:
                 return job

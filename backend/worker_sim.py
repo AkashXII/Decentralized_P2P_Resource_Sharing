@@ -33,7 +33,7 @@ def register_worker():
         "name": "GPU-Worker-1",
         "host": "localhost",
         "port": 9001,
-        "has_gpu": torch.cuda.is_available(),
+        "has_gpu": True,
         "gpu_memory_total_mb": 8000,
         "gpu_memory_free_mb": 6000,
         "models": [{"name": "resnet50", "framework": "pytorch"}]
