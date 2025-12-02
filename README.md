@@ -19,8 +19,8 @@ The dashboard updates with the job status and prediction result.
 Getting Started:
 
 1. Clone Repository
-git clone <repository-url>
-cd project-folder
+"git clone <repository-url>
+cd project-folder"
 
 2. Start Backend
 cd backend
